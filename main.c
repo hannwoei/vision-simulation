@@ -139,10 +139,15 @@ static void yuyv_to_rgb24 (int width, int height, unsigned char *src, unsigned c
    }
 }
 
+//static void show_image(unsigned char *)
+//{
+//
+//}
+
 static void process_image(const void *p, int size)
 {
-        if (out_buf)
-                fwrite(p, size, 1, stdout);
+//        if (out_buf)
+//                fwrite(p, size, 1, stdout);
 
         unsigned char *yuv, *rgb;
         yuv =(char *) calloc(imW*imH,sizeof(char));
@@ -177,9 +182,8 @@ static void process_image(const void *p, int size)
 //		cvCvtColor(yuvframe, rgbframe, CV_YUV2BGR);
 //        cvCvtColor(yuvframe, rgbframe, CV_YCrCb2RGB);
 
-		cvNamedWindow("window",CV_WINDOW_AUTOSIZE);
 		cvShowImage("window", frame);
-		cvWaitKey(0);
+//		cvWaitKey(0);
 
         fflush(stderr);
         fprintf(stderr, ".");
@@ -188,7 +192,7 @@ static void process_image(const void *p, int size)
 //        free(yuv);
 //        free(rgb);
 //    	cvReleaseImage(&frame);
-//    	cvDestroyWindow("window");
+
 }
 
 static int read_frame(void)
@@ -287,13 +291,11 @@ static int read_frame(void)
 
 static void mainloop(void)
 {
-        unsigned int count;
-
-        count = frame_count;
-
+//        unsigned int count;
+//        count = frame_count;
 //        printf("%d\n",count);
 
-        while (count-- > 0) {
+        while (1) {
                 for (;;) {
                         fd_set fds;
                         struct timeval tv;
@@ -323,6 +325,9 @@ static void mainloop(void)
                                 break;
                         /* EAGAIN - continue select loop. */
                 }
+                int k = cvWaitKey(33);
+
+                if (k==27) break;
         }
 }
 
@@ -757,7 +762,7 @@ int main(int argc, char **argv)
 	else if(videoOption == 2) // v4l2
 	{
         dev_name = "/dev/video0";
-
+		cvNamedWindow("window",CV_WINDOW_AUTOSIZE);
         for (;;) {
                 int idx;
                 int c;
@@ -822,7 +827,7 @@ int main(int argc, char **argv)
         close_device();
         fprintf(stderr, "\n");
 
-
+        cvDestroyWindow("window");
 
 
 	}
