@@ -146,17 +146,17 @@ static void yuyv_to_rgb24 (int width, int height, unsigned char *src, unsigned c
 
 static void process_image(const void *p, int size)
 {
-//        if (out_buf)
-//                fwrite(p, size, 1, stdout);
+        if (out_buf)
+                fwrite(p, size, 1, stdout);
 
         unsigned char *yuv, *rgb;
         yuv =(char *) calloc(imW*imH,sizeof(char));
         rgb =(char *) calloc(imW*imH,sizeof(char));
 
-        memcpy(yuv,p,size);
+//        memcpy(yuv,p,size);
 //        CvMat yuvcvMat = cvMat(imH,imW,CV_8UC1,yuv);
 
-        yuyv_to_rgb24 (imW, imH, p, rgb);
+        yuyv_to_rgb24 (imW, imH, (unsigned char*)p, rgb);
         //        IplImage* frame = cvCreateImageHeader(cvSize(imW,imH), IPL_DEPTH_8U, 3);
         //        cvSetData(frame, rgb, imW*3);
 
@@ -188,9 +188,15 @@ static void process_image(const void *p, int size)
         fflush(stderr);
         fprintf(stderr, ".");
         fflush(stdout);
-
+//        int i;
+//        for(i=0; i<imH*imW;i++)
+//		{
+//        	free(yuv[i]);
+//        	free(rgb[i]);
+//		}
 //        free(yuv);
 //        free(rgb);
+
 //    	cvReleaseImage(&frame);
 
 }
