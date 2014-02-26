@@ -130,40 +130,46 @@ static void yuyv_to_rgb24 (int width, int height, unsigned char *src, unsigned c
    }
 }
 
-static void show_image(unsigned char *p, int *x, int *y, int n_found_points)
+static void show_image(unsigned char *p, int *x, int *y, int *new_x, int *new_y, int n_found_points)
 {
 		int i;
 		unsigned char *rgb;
 		rgb =(unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
 		yuyv_to_rgb24 (imW, imH, p, rgb);
         CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
-        IplImage* frame =  (IplImage*)&cvmat;
+        IplImage* img =  (IplImage*)&cvmat;
 
         for(i=0; i<n_found_points; i++)
         {
 			int radius = 10;
-			cvCircle(frame,
-					cvPoint((int)(x[i] + 0.5f),(int)(y[i] + 0.5f)),
-					radius,
-					cvScalar(0,0,255,0),1,8,0);
+//			cvCircle(img,
+//					cvPoint((int)(x[i] + 0.5f),(int)(y[i] + 0.5f)),
+//					radius,
+//					cvScalar(0,0,255,0),1,8,0);
+			CvPoint p0 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
+			CvPoint p1 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
+			cvLine( img, p0, p1, CV_RGB(255,0,0), 1, 8, 0);
         }
-		cvShowImage("window", frame);
+		cvShowImage("window", img);
 //		cvWaitKey(0);
 		free(rgb);
 
 }
+
+unsigned char *frame, *gray_frame, *old_frame;
 
 static void process_image(unsigned char *p, int size)
 {
         if (out_buf)
                 fwrite(p, size, 1, stdout);
 
-        int *x, *y, i;
-        unsigned char *frame, *gray_frame;
+        int *x, *y, *new_x, *new_y, i, *status, error_opticflow;
         x = (int *) calloc(MAX_POINTS,sizeof(int));
         y = (int *) calloc(MAX_POINTS,sizeof(int));
-        frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
-        gray_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+        new_x = (int *) calloc(MAX_POINTS,sizeof(int));
+        new_y = (int *) calloc(MAX_POINTS,sizeof(int));
+        status = (int *) calloc(MAX_POINTS,sizeof(int));
+
         memcpy(frame,p,size);
 
 		// FAST corner:
@@ -182,15 +188,26 @@ static void process_image(unsigned char *p, int size)
 		}
 		if(n_found_points) error_corner = 0;
 
+		if(error_corner == 0)
+		{
+			error_opticflow = opticFlowLK(frame, old_frame, x, y, n_found_points, imW, imH, new_x, new_y, status, 5, MAX_POINTS);
+		}
+
+		memcpy(old_frame,frame,imH*imW*2);
+
 		free(pnts_fast);
-		free(frame);
-		free(gray_frame);
 
         fflush(stderr);
         fprintf(stderr, ".");
         fflush(stdout);
 
-        show_image(p, x, y, n_found_points);
+        show_image(p, x, y, new_x, new_y, n_found_points);
+
+        free(x);
+        free(y);
+        free(new_x);
+        free(new_y);
+        free(status);
 }
 
 static int read_frame(void)
@@ -295,6 +312,9 @@ static void mainloop(void)
 //        unsigned int count;
 //        count = frame_count;
 //        printf("%d\n",count);
+	frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+	gray_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+	old_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
 
         while (1) {
                 for (;;) {
@@ -330,6 +350,9 @@ static void mainloop(void)
 
                 if (k==27) break;
         }
+//        free((unsigned char*) frame);
+//        free((unsigned char*) gray_frame);
+//        free((unsigned char*) old_frame);
 }
 
 static void stop_capturing(void)
