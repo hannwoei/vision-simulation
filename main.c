@@ -139,66 +139,27 @@ static void yuyv_to_rgb24 (int width, int height, unsigned char *src, unsigned c
    }
 }
 
-//static void show_image(unsigned char *)
-//{
-//
-//}
+static void show_image(unsigned char *p)
+{
+		unsigned char *rgb;
+		rgb =(unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+		yuyv_to_rgb24 (imW, imH, p, rgb);
+        CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
+        IplImage* frame =  (IplImage*)&cvmat;
+		cvShowImage("window", frame);
+//		cvWaitKey(0);
+		free(rgb);
+
+}
 
 static void process_image(const void *p, int size)
 {
         if (out_buf)
                 fwrite(p, size, 1, stdout);
 
-        unsigned char *yuv, *rgb;
-        yuv =(char *) calloc(imW*imH,sizeof(char));
-        rgb =(char *) calloc(imW*imH,sizeof(char));
-
-//        memcpy(yuv,p,size);
-//        CvMat yuvcvMat = cvMat(imH,imW,CV_8UC1,yuv);
-
-        yuyv_to_rgb24 (imW, imH, (unsigned char*)p, rgb);
-        //        IplImage* frame = cvCreateImageHeader(cvSize(imW,imH), IPL_DEPTH_8U, 3);
-        //        cvSetData(frame, rgb, imW*3);
-
-//      IplImage* frame, *grayframe;
-//		CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
-//		CvMat cvmat = cvMat(imH, imW, CV_8UC3, (void*)p);
-//		frame = cvDecodeImage(&cvmat, 1);
-//        IplImage* frame = cvCreateImageHeader(cvSize(imW,imH), IPL_DEPTH_8U, 3);
-//        frame->origin = ~frame->origin;
-//		cvSetData(frame, yuv, imW*3);
-//        IplImage *yuvframe, *rgbframe;
-//        rgbframe = cvCreateImageHeader(cvSize(imW,imH), IPL_DEPTH_8U, 3);
-//        CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
-//        yuvframe = (IplImage*)&yuvcvMat;
-//        yuvframe = cvDecodeImage(&yuvcvMat, 1);
-//        rgbframe = cvDecodeImage(&cvmat, 1);
-
-//        IplImage* frame = cvCreateImageHeader(cvSize(imW,imH), IPL_DEPTH_8U, 3);
-//        cvSetData(frame, rgb, imW*3);
-        CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
-        IplImage* frame =  (IplImage*)&cvmat;
-
-//		cvCvtColor(yuvframe, rgbframe, CV_YUV2BGR);
-//        cvCvtColor(yuvframe, rgbframe, CV_YCrCb2RGB);
-
-		cvShowImage("window", frame);
-//		cvWaitKey(0);
-
         fflush(stderr);
         fprintf(stderr, ".");
         fflush(stdout);
-//        int i;
-//        for(i=0; i<imH*imW;i++)
-//		{
-//        	free(yuv[i]);
-//        	free(rgb[i]);
-//		}
-//        free(yuv);
-//        free(rgb);
-
-//    	cvReleaseImage(&frame);
-
 }
 
 static int read_frame(void)
@@ -250,6 +211,9 @@ static int read_frame(void)
                 assert(buf.index < n_buffers);
 
                 process_image(buffers[buf.index].start, buf.bytesused);
+
+                show_image(buffers[buf.index].start);
+
 
                 if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                         errno_exit("VIDIOC_QBUF");
