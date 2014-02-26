@@ -31,6 +31,12 @@
 
 #include <linux/videodev2.h>
 
+// Computer vision
+#include "fastRosten.h"
+int n_found_points = 0;
+int MAX_POINTS = 25;
+int error_corner;
+
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
 enum io_method {
@@ -139,27 +145,65 @@ static void yuyv_to_rgb24 (int width, int height, unsigned char *src, unsigned c
    }
 }
 
-static void show_image(unsigned char *p)
+static void show_image(unsigned char *p, int *x, int *y, int n_found_points)
 {
+		int i;
 		unsigned char *rgb;
 		rgb =(unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
 		yuyv_to_rgb24 (imW, imH, p, rgb);
         CvMat cvmat = cvMat(imH, imW, CV_8UC3, rgb);
         IplImage* frame =  (IplImage*)&cvmat;
+
+        for(i=0; i<n_found_points; i++)
+        {
+			int radius = 10;
+			cvCircle(frame,
+					cvPoint((int)(x[i] + 0.5f),(int)(y[i] + 0.5f)),
+					radius,
+					cvScalar(0,0,255,0),1,8,0);
+        }
 		cvShowImage("window", frame);
 //		cvWaitKey(0);
 		free(rgb);
 
 }
 
-static void process_image(const void *p, int size)
+static void process_image(unsigned char *p, int size)
 {
         if (out_buf)
                 fwrite(p, size, 1, stdout);
 
+        int *x, *y, i;
+        unsigned char *frame;
+        x = (int *) calloc(MAX_POINTS,sizeof(int));
+        y = (int *) calloc(MAX_POINTS,sizeof(int));
+        frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+        memcpy(frame,p,size);
+
+		// FAST corner:
+		int fast_threshold = 40; //20
+
+		xyFAST* pnts_fast;
+//		CvtYUYV2Gray(gray_img, frame, imgWidth, imgHeight);
+		pnts_fast = fast9_detect((const byte*)frame, imW, imH, imW, fast_threshold, &n_found_points);
+
+		// transform the points to the format we need (is also done in the other corner finders
+		n_found_points = (n_found_points > MAX_POINTS) ? MAX_POINTS : n_found_points;
+		for(i = 0; i < n_found_points; i++)
+		{
+			x[i] = pnts_fast[i].x;
+			y[i] = pnts_fast[i].y;
+		}
+		if(n_found_points) error_corner = 0;
+
+		free(pnts_fast);
+		free(frame);
+
         fflush(stderr);
         fprintf(stderr, ".");
         fflush(stdout);
+
+        show_image(p, x, y, n_found_points);
 }
 
 static int read_frame(void)
@@ -212,7 +256,7 @@ static int read_frame(void)
 
                 process_image(buffers[buf.index].start, buf.bytesused);
 
-                show_image(buffers[buf.index].start);
+
 
 
                 if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
