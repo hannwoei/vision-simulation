@@ -33,8 +33,9 @@
 
 // Computer vision
 #include "fastRosten.h"
+#include "optic_flow_gdc.h"
 int n_found_points = 0;
-int MAX_POINTS = 25;
+int MAX_POINTS = 50;
 int error_corner;
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
@@ -77,22 +78,6 @@ static int xioctl(int fh, int request, void *arg)
         } while (-1 == r && EINTR == errno);
 
         return r;
-}
-
-static void CvtYUYV2Gray(unsigned char *grayframe, unsigned char *frame, int imW, int imH){
-    int x, y;
-    char *Y, *gray;
-    //get only Y component for grayscale from (Y1)(U1,2)(Y2)(V1,2)
-    for (y = 0; y < imH; y++) {
-        Y = frame + (imW * 2 * y);
-        gray = grayframe + (imW * y);
-        for (x=0; x < imW; x += 2) {
-            gray[x] = *Y;
-            Y += 2;
-            gray[x + 1] = *Y;
-            Y += 2;
-        }
-    }
 }
 
 /* convert from 4:2:2 YUYV interlaced to RGB24 */
@@ -174,18 +159,19 @@ static void process_image(unsigned char *p, int size)
                 fwrite(p, size, 1, stdout);
 
         int *x, *y, i;
-        unsigned char *frame;
+        unsigned char *frame, *gray_frame;
         x = (int *) calloc(MAX_POINTS,sizeof(int));
         y = (int *) calloc(MAX_POINTS,sizeof(int));
         frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+        gray_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
         memcpy(frame,p,size);
 
 		// FAST corner:
 		int fast_threshold = 40; //20
 
 		xyFAST* pnts_fast;
-//		CvtYUYV2Gray(gray_img, frame, imgWidth, imgHeight);
-		pnts_fast = fast9_detect((const byte*)frame, imW, imH, imW, fast_threshold, &n_found_points);
+		CvtYUYV2Gray(gray_frame, frame, imW, imH);
+		pnts_fast = fast9_detect((const byte*)gray_frame, imW, imH, imW, fast_threshold, &n_found_points);
 
 		// transform the points to the format we need (is also done in the other corner finders
 		n_found_points = (n_found_points > MAX_POINTS) ? MAX_POINTS : n_found_points;
@@ -198,6 +184,7 @@ static void process_image(unsigned char *p, int size)
 
 		free(pnts_fast);
 		free(frame);
+		free(gray_frame);
 
         fflush(stderr);
         fprintf(stderr, ".");
