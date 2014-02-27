@@ -3,6 +3,8 @@
  *
  *  Created on: Feb 12, 2014
  *      Author: h2w
+ *      To show video streaming and plot real-time results:
+ *      ./test | ./driveGnuPlotStreams.pl 2 50 50 0 80 -0.1 0.1 count divergence 500x300+0+0 500x300+500+0
  */
 
 
@@ -233,7 +235,7 @@ static void process_image(unsigned char *p, int size)
 
 		extractInformationFromLinearFlowField(divergence, &mean_tti, &median_tti, &d_heading, &d_pitch, pu, pv, imW, imH, 60);
 
-		printf("count=%d,div=%f\n",count,divergence[0]);
+		printf("0:%d\n1:%f\n",count,divergence[0]);
 
 		memcpy(old_frame,frame,imH*imW*2);
 
@@ -695,7 +697,7 @@ static void init_device(void)
         // h2w
         char fourcc[5] = {0};
         strncpy(fourcc, (char *)&fmt.fmt.pix.pixelformat, 4);
-        printf( "Selected Camera Mode:\n"
+/*        printf( "Selected Camera Mode:\n"
                 "  Width: %d\n"
                 "  Height: %d\n"
                 "  PixFmt: %s\n"
@@ -703,7 +705,7 @@ static void init_device(void)
                 fmt.fmt.pix.width,
                 fmt.fmt.pix.height,
                 fourcc,
-                fmt.fmt.pix.field);
+                fmt.fmt.pix.field);*/
 
         /* Buggy driver paranoia. */
         min = fmt.fmt.pix.width * 2;
