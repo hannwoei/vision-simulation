@@ -34,6 +34,7 @@
 // Computer vision
 #include "fastRosten.h"
 #include "optic_flow_gdc.h"
+
 int n_found_points = 0;
 int MAX_POINTS = 50;
 int error_corner;
@@ -163,12 +164,19 @@ static void process_image(unsigned char *p, int size)
         if (out_buf)
                 fwrite(p, size, 1, stdout);
 
-        int *x, *y, *new_x, *new_y, i, *status, error_opticflow;
+        int *x, *y, *new_x, *new_y, i, *status, error_opticflow, *dx, *dy, *n_inlier_minu, *n_inlier_minv;
         x = (int *) calloc(MAX_POINTS,sizeof(int));
         y = (int *) calloc(MAX_POINTS,sizeof(int));
         new_x = (int *) calloc(MAX_POINTS,sizeof(int));
         new_y = (int *) calloc(MAX_POINTS,sizeof(int));
         status = (int *) calloc(MAX_POINTS,sizeof(int));
+    	dx = (int *) calloc(MAX_POINTS,sizeof(int));
+    	dy = (int *) calloc(MAX_POINTS,sizeof(int));
+    	n_inlier_minu = (int *)calloc(1,sizeof(int));
+    	n_inlier_minv = (int *)calloc(1,sizeof(int));
+
+    	float *divergence;
+    	divergence = (float *) calloc(1,sizeof(float));
 
         memcpy(frame,p,size);
 
@@ -191,14 +199,48 @@ static void process_image(unsigned char *p, int size)
 		if(error_corner == 0)
 		{
 			error_opticflow = opticFlowLK(frame, old_frame, x, y, n_found_points, imW, imH, new_x, new_y, status, 5, MAX_POINTS);
+			for(i = 0; i < n_found_points; i++)
+			{
+				dx[i] = new_x[i]-x[i];
+				dy[i] = new_y[i]-y[i];
+			}
 		}
+
+
+		// linear fit of the optic flow field
+		float error_threshold = 10; // 10
+		int n_iterations = 40; // 40
+		int count;
+		count = n_found_points;
+		int n_samples = (count < 5) ? count : 5;
+		float mean_tti, median_tti, d_heading, d_pitch;
+
+		// minimum = 3
+//		if(n_samples < 3)
+//		{
+//			// set dummy values for tti, etc.
+//			mean_tti = 1000.0f / FPS;
+//			median_tti = mean_tti;
+//			d_heading = 0;
+//			d_pitch = 0;
+//			return;
+//		}
+		float pu[3], pv[3];
+
+		float divergence_error;
+		float min_error_u, min_error_v;
+		fitLinearFlowField(pu, pv, &divergence_error, x, y, dx, dy, count, n_samples, &min_error_u, &min_error_v, n_iterations, error_threshold, n_inlier_minu, n_inlier_minv);
+
+		extractInformationFromLinearFlowField(divergence, &mean_tti, &median_tti, &d_heading, &d_pitch, pu, pv, imW, imH, 60);
+
+		printf("count=%d,div=%f\n",count,divergence[0]);
 
 		memcpy(old_frame,frame,imH*imW*2);
 
 		free(pnts_fast);
 
         fflush(stderr);
-        fprintf(stderr, ".");
+//        fprintf(stderr, ".");
         fflush(stdout);
 
         show_image(p, x, y, new_x, new_y, n_found_points);
@@ -208,6 +250,7 @@ static void process_image(unsigned char *p, int size)
         free(new_x);
         free(new_y);
         free(status);
+        free(divergence);
 }
 
 static int read_frame(void)
