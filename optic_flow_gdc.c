@@ -2023,11 +2023,11 @@ void extractInformationFromLinearFlowField(float *divergence, float *mean_tti, f
 
 		//apply a moving average
 		int medianfilter = 0;
-		int averagefilter = 0;
+		int averagefilter = 1;
 
 		if(averagefilter == 1)
 		{
-			if (*divergence < 1000.0 && *divergence > -1000.0) {
+			if (*divergence < 10.0 && *divergence > -10.0) {
 				div_buf[div_point] = *divergence;
 				div_point = (div_point+1) %mov_block;
 			}

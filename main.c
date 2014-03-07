@@ -37,9 +37,44 @@
 #include "fastRosten.h"
 #include "optic_flow_gdc.h"
 
-int n_found_points = 0;
-int MAX_POINTS = 50;
+
+// Corner Detection
+int count = 0;
+int max_count = 25;
 int error_corner;
+int flow_point_size = 0;
+#define MAX_COUNT 100	// Maximum number of flow points
+
+unsigned char *frame, *gray_frame, *prev_gray_frame;
+
+IplImage *pyramid = 0;
+IplImage *prev_pyramid = 0;
+IplImage *swap_temp = 0;
+CvPoint2D32f* swap_points;
+IplImage* cvGrayImg = 0;
+IplImage* cvPrevGrayImg = 0;
+CvPoint2D32f* points[3];
+int flags = 0;
+char* status = 0;
+
+typedef struct flowPoint
+{
+	double x;
+	double y;
+	double prev_x;
+	double prev_y;
+	double dx;
+	double dy;
+	double new_dx;
+	double new_dy;
+//	double P[16]; // represents a diagonal 4x4 matrix
+//	double Q[16]; // represents a diagonal 4x4 matrix
+//	double R[16]; // represents a diagonal 4x4 matrix
+//	double K[16]; // represents a diagonal 4x4 matrix
+//	int n_observations;
+} flowPoint;
+
+flowPoint flow_points[100];
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
@@ -145,13 +180,13 @@ static void show_image(unsigned char *p, int *x, int *y, int *new_x, int *new_y,
         for(i=0; i<n_found_points; i++)
         {
 			int radius = 10;
-//			cvCircle(img,
-//					cvPoint((int)(x[i] + 0.5f),(int)(y[i] + 0.5f)),
-//					radius,
-//					cvScalar(0,0,255,0),1,8,0);
-			CvPoint p0 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
-			CvPoint p1 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
-			cvLine( img, p0, p1, CV_RGB(255,0,0), 1, 8, 0);
+			cvCircle(img,
+					cvPoint((int)(x[i] + 0.5f),(int)(y[i] + 0.5f)),
+					radius,
+					cvScalar(0,0,255,0),1,8,0);
+//			CvPoint p0 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
+//			CvPoint p1 = cvPoint( cvRound( x[i] ), cvRound( y[i] ) );
+//			cvLine( img, p0, p1, CV_RGB(255,0,0), 1, 8, 0);
         }
 		cvShowImage("window", img);
 //		cvWaitKey(0);
@@ -159,21 +194,193 @@ static void show_image(unsigned char *p, int *x, int *y, int *new_x, int *new_y,
 
 }
 
-unsigned char *frame, *gray_frame, *old_frame;
+void setPointsToFlowPoints(struct flowPoint flow_points[])
+{
+	// set the points array to match the flow points:
+	int new_size = (flow_point_size < MAX_COUNT) ? flow_point_size : MAX_COUNT;
+	count = new_size;
+	int i;
+	for(i = 0; i < new_size; i++)
+	{
+		points[0][i].x = (float)flow_points[i].x;
+		points[0][i].y = (float)flow_points[i].y;
+	}
+}
+
+void findPoints(struct flowPoint flow_points[])
+{
+	// a) find suitable points in the image
+	// b) compare their locations with those of flow_points, only allowing new points if far enough
+	// c) update flow_points (and points) to include the new points
+	// d) put the flow point into the points-array, which will be used for the flow
+
+	// a)
+
+	// FAST corner:
+	int fast_threshold = 40; //20
+	xyFAST* pnts_fast;
+
+//	CvtYUYV2Gray(gray_frame, frame, imW, imH); // convert to gray scaled image is a must for FAST corner
+	pnts_fast = fast9_detect((const byte*)gray_frame, imW, imH, imW, fast_threshold, &count);
+
+	// transform the points to the format we need (is also done in the other corner finders
+	count = (count > MAX_COUNT) ? MAX_COUNT : count;
+	int i,j;
+	for(i = 0; i < count; i++)
+	{
+		points[0][i].x = pnts_fast[i].x;
+		points[0][i].y = pnts_fast[i].y;
+	}
+
+	// b)
+	float distance2;
+	float min_distance = 10;
+	float min_distance2 = min_distance*min_distance;
+	int new_point;
+
+	int max_new_points = (count < max_count - flow_point_size) ? count : max_count - flow_point_size; //flow_point_size = [0,25]
+
+	for(i = 0; i < max_new_points; i++)
+	{
+		new_point = 1;
+
+		for(j = 0; j < flow_point_size; j++)
+		{
+			// distance squared:
+			distance2 = (points[0][i].x - flow_points[j].x)*(points[0][i].x - flow_points[j].x) +
+						(points[0][i].y - flow_points[j].y)*(points[0][i].y - flow_points[j].y);
+			if(distance2 < min_distance2)
+			{
+				new_point = 0;
+			}
+		}
+
+		// c)
+		if(new_point)
+		{
+			// add the flow_points:
+			flow_points[flow_point_size].x = points[0][i].x;
+			flow_points[flow_point_size].y = points[0][i].y;
+			flow_points[flow_point_size].prev_x = points[0][i].x;
+			flow_points[flow_point_size].prev_y = points[0][i].y;
+			flow_points[flow_point_size].dx = 0;
+			flow_points[flow_point_size].dy = 0;
+			flow_points[flow_point_size].new_dx = 0;
+			flow_points[flow_point_size].new_dy = 0;
+			flow_point_size++;
+		}
+	}
+	setPointsToFlowPoints(flow_points);
+}
+
+void trackPoints(unsigned char *gray_frame, unsigned char *prev_gray_frame, struct flowPoint flow_points[])
+{
+	// a) track the points to the new image
+	// b) quality checking  for eliminating points (status / match error / tracking the features back and comparing / etc.)
+	// c) update the points (immediate update / Kalman update)
+
+	int i;
+
+    CvMat cvGray = cvMat(imH, imW, CV_8U, gray_frame);
+    CvMat cvPrevGray = cvMat(imH, imW, CV_8U, prev_gray_frame);
+    cvGrayImg =  (IplImage*)&cvGray;
+    cvPrevGrayImg =  (IplImage*)&cvPrevGray;
+
+    if(!pyramid)
+    {
+    	pyramid = cvCreateImage( cvGetSize(cvGrayImg), 8, 1 );
+    	prev_pyramid = cvCreateImage( cvGetSize(cvPrevGrayImg), 8, 1 );
+//    	char* status = (char*) malloc(MAX_COUNT*sizeof(char));
+    	status = (char*) cvAlloc(MAX_COUNT);
+//    	float* error = (float*) malloc(MAX_COUNT*sizeof(float));
+    }
+
+	if(flow_point_size > MAX_COUNT) printf("PROBLEM PROBLEM PROBLEM - too many points!");
+
+	// a) track the points to the new image
+	if( count > 0)
+    {
+        cvCalcOpticalFlowPyrLK( cvPrevGrayImg, cvGrayImg, prev_pyramid, pyramid,
+            points[0], points[1], count, cvSize(5,5), 3, status, 0,	// points[0]: prev_features
+            cvTermCriteria(CV_TERMCRIT_ITER|CV_TERMCRIT_EPS, 10, 0.03), flags );	// points[1]: curr_features
+        flags |= CV_LKFLOW_PYR_A_READY;
+//        cvCalcOpticalFlowPyrLK( cvPrevGrayImg, cvGrayImg, prev_pyramid, pyramid,
+//            points[0], points[1], count, cvSize(5,5), 3, status, error,	// points[0]: prev_features
+//            cvTermCriteria(CV_TERMCRIT_ITER|CV_TERMCRIT_EPS, 10, 0.03), flags );	// points[1]: curr_features
+//        flags |= CV_LKFLOW_PYR_A_READY;
+	}
+
+	// b) quality checking  for eliminating points (status / match error / tracking the features back and comparing / etc.)
+	int remove_point = 0;
+	int c;
+	for(i = flow_point_size-1; i >= 0; i-- )
+    {
+        if(!status[i])
+		{
+			remove_point = 1;
+		}
+
+		// error[i] can also be used, etc.
+
+		if(remove_point)
+		{
+			// we now erase the point if it is not observed in the new image
+			// later we may count it as a single miss, allowing for a few misses
+			for(c = i; c < flow_point_size-1; c++)
+			{
+				flow_points[c].x = flow_points[c+1].x;
+			}
+			flow_point_size--;
+		}
+		else
+		{
+			flow_points[i].new_dx = points[1][i].x - points[0][i].x;
+			flow_points[i].new_dy = points[1][i].y - points[0][i].y;
+		}
+	}
+
+	// c) update the points (immediate update / Kalman update)
+	count = flow_point_size;
+
+	int KALMAN_UPDATE = 0;
+
+	if(!KALMAN_UPDATE)
+	{
+		for(i = 0; i < count; i++)
+		{
+			// immediate update:
+			flow_points[i].dx = flow_points[i].new_dx;
+			flow_points[i].dy = flow_points[i].new_dy;
+			flow_points[i].prev_x = flow_points[i].x;
+			flow_points[i].prev_y = flow_points[i].y;
+			flow_points[i].x = flow_points[i].x + flow_points[i].dx;
+			flow_points[i].y = flow_points[i].y + flow_points[i].dy;
+		}
+	}
+	else
+	{
+
+	}
+
+//	free(error);
+//	free(status);
+
+	return;
+}
 
 static void process_image(unsigned char *p, int size)
 {
-        if (out_buf)
-                fwrite(p, size, 1, stdout);
+//        if (out_buf)
+//                fwrite(p, size, 1, stdout);
 
-        int *x, *y, *new_x, *new_y, i, *status, error_opticflow, *dx, *dy, *n_inlier_minu, *n_inlier_minv;
-        x = (int *) calloc(MAX_POINTS,sizeof(int));
-        y = (int *) calloc(MAX_POINTS,sizeof(int));
-        new_x = (int *) calloc(MAX_POINTS,sizeof(int));
-        new_y = (int *) calloc(MAX_POINTS,sizeof(int));
-        status = (int *) calloc(MAX_POINTS,sizeof(int));
-    	dx = (int *) calloc(MAX_POINTS,sizeof(int));
-    	dy = (int *) calloc(MAX_POINTS,sizeof(int));
+        int *x, *y, *new_x, *new_y, i, error_opticflow, *dx, *dy, *n_inlier_minu, *n_inlier_minv;
+
+        x = (int *) calloc(MAX_COUNT,sizeof(int));
+        y = (int *) calloc(MAX_COUNT,sizeof(int));
+        new_x = (int *) calloc(MAX_COUNT,sizeof(int));
+        new_y = (int *) calloc(MAX_COUNT,sizeof(int));
+    	dx = (int *) calloc(MAX_COUNT,sizeof(int));
+    	dy = (int *) calloc(MAX_COUNT,sizeof(int));
     	n_inlier_minu = (int *)calloc(1,sizeof(int));
     	n_inlier_minv = (int *)calloc(1,sizeof(int));
 
@@ -182,77 +389,109 @@ static void process_image(unsigned char *p, int size)
 
         memcpy(frame,p,size);
 
-		// FAST corner:
-		int fast_threshold = 40; //20
+    	CvtYUYV2Gray(gray_frame, frame, imW, imH); // convert to gray scaled image is a must for FAST corner
 
-		xyFAST* pnts_fast;
-		CvtYUYV2Gray(gray_frame, frame, imW, imH);
-		pnts_fast = fast9_detect((const byte*)gray_frame, imW, imH, imW, fast_threshold, &n_found_points);
+		// ***********************************************************************************************************************
+		// (1) possibly find new points - keeping possible old ones (normal cv methods / efficient point finding / active corners)
+		// ***********************************************************************************************************************
 
-		// transform the points to the format we need (is also done in the other corner finders
-		n_found_points = (n_found_points > MAX_POINTS) ? MAX_POINTS : n_found_points;
-		for(i = 0; i < n_found_points; i++)
+        int ALWAYS_NEW_POINTS = 0;
+
+        if(ALWAYS_NEW_POINTS)
+        {
+        	// Clear corners
+        	memset(flow_points,0,sizeof(flowPoint)*flow_point_size);
+        	findPoints(flow_points);
+        }
+        else
+        {
+        	int threshold_n_points = 25;
+        	if(flow_point_size < threshold_n_points)
+        	{
+        		findPoints(flow_points);
+        	}
+        }
+
+		// **********************************************************************************************************************
+		// (2) track the points to the new image, possibly using external information (TTC, known lateral / rotational movements)
+		// **********************************************************************************************************************
+
+        if(count)
+        {
+    		trackPoints(gray_frame, prev_gray_frame, flow_points);
+        }
+
+		for(i=0; i<flow_point_size; i++)
 		{
-			x[i] = pnts_fast[i].x;
-			y[i] = pnts_fast[i].y;
+			x[i] = flow_points[i].x;
+			y[i] = flow_points[i].y;
+			dx[i] = flow_points[i].dx;
+			dy[i] = flow_points[i].dy;
 		}
-		if(n_found_points) error_corner = 0;
 
-		if(error_corner == 0)
+		int start_fitting = 0;
+
+		if(start_fitting == 1)
 		{
-			error_opticflow = opticFlowLK(frame, old_frame, x, y, n_found_points, imW, imH, new_x, new_y, status, 5, MAX_POINTS);
-			for(i = 0; i < n_found_points; i++)
-			{
-				dx[i] = new_x[i]-x[i];
-				dy[i] = new_y[i]-y[i];
-			}
+			// linear fit of the optic flow field
+			float error_threshold = 10; // 10
+			int n_iterations = 20; // 40
+			int count;
+			count = flow_point_size;
+			int n_samples = (count < 5) ? count : 5;
+			float mean_tti, median_tti, d_heading, d_pitch;
+
+			// minimum = 3
+	//		if(n_samples < 3)
+	//		{
+	//			// set dummy values for tti, etc.
+	//			mean_tti = 1000.0f / FPS;
+	//			median_tti = mean_tti;
+	//			d_heading = 0;
+	//			d_pitch = 0;
+	//			return;
+	//		}
+			float pu[3], pv[3];
+
+			float divergence_error;
+			float min_error_u, min_error_v;
+			fitLinearFlowField(pu, pv, &divergence_error, x, y, dx, dy, count, n_samples, &min_error_u, &min_error_v, n_iterations, error_threshold, n_inlier_minu, n_inlier_minv);
+
+			extractInformationFromLinearFlowField(divergence, &mean_tti, &median_tti, &d_heading, &d_pitch, pu, pv, imW, imH, 60);
+
+			printf("0:%d\n1:%f\n",count,divergence[0]);
 		}
 
+//		printf("1 char = %d, size of gray = %d, size of prev_gray = %d\n", sizeof(char), sizeof(gray_frame[0]),sizeof(prev_gray_frame[0]));
 
-		// linear fit of the optic flow field
-		float error_threshold = 10; // 10
-		int n_iterations = 40; // 40
-		int count;
-		count = n_found_points;
-		int n_samples = (count < 5) ? count : 5;
-		float mean_tti, median_tti, d_heading, d_pitch;
+		memcpy(prev_gray_frame,gray_frame,imH*imW);
 
-		// minimum = 3
-//		if(n_samples < 3)
-//		{
-//			// set dummy values for tti, etc.
-//			mean_tti = 1000.0f / FPS;
-//			median_tti = mean_tti;
-//			d_heading = 0;
-//			d_pitch = 0;
-//			return;
-//		}
-		float pu[3], pv[3];
+		// *********************************************
+		// (5) housekeeping to prepare for the next call
+		// *********************************************
 
-		float divergence_error;
-		float min_error_u, min_error_v;
-		fitLinearFlowField(pu, pv, &divergence_error, x, y, dx, dy, count, n_samples, &min_error_u, &min_error_v, n_iterations, error_threshold, n_inlier_minu, n_inlier_minv);
-
-		extractInformationFromLinearFlowField(divergence, &mean_tti, &median_tti, &d_heading, &d_pitch, pu, pv, imW, imH, 60);
-
-		printf("0:%d\n1:%f\n",count,divergence[0]);
-
-		memcpy(old_frame,frame,imH*imW*2);
-
-		free(pnts_fast);
+		// copy pyramid / gray_small / gray into prev ... / .../ _gray_small:
+		CV_SWAP( points[0],			points[1],		swap_points );
+//		CV_SWAP( cvPrevGrayImg,		cvGrayImg,		swap_temp   );
+		CV_SWAP( prev_pyramid,		pyramid,		swap_temp   );
 
         fflush(stderr);
 //        fprintf(stderr, ".");
         fflush(stdout);
 
-        show_image(p, x, y, new_x, new_y, n_found_points);
+
+        show_image(p, x, y, new_x, new_y, flow_point_size);
 
         free(x);
         free(y);
         free(new_x);
         free(new_y);
-        free(status);
+        free(dx);
+        free(dy);
+        free(n_inlier_minu);
+        free(n_inlier_minv);
         free(divergence);
+
 }
 
 static int read_frame(void)
@@ -354,12 +593,21 @@ static int read_frame(void)
 
 static void mainloop(void)
 {
-//        unsigned int count;
-//        count = frame_count;
-//        printf("%d\n",count);
+
 	frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
-	gray_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
-	old_frame = (unsigned char *) calloc(imW*imH*2,sizeof(unsigned char));
+	gray_frame = (unsigned char *) calloc(imW*imH,sizeof(unsigned char));
+	prev_gray_frame = (unsigned char *) calloc(imW*imH,sizeof(unsigned char));
+
+	int it;
+	for ( it=0; it<3; it++)
+	{
+		points[it] = 0;
+	}
+
+	// Allocate feature point buffer (once)
+	points[0]		= (CvPoint2D32f*)cvAlloc(MAX_COUNT*sizeof(points[0][0]));
+    points[1]		= (CvPoint2D32f*)cvAlloc(MAX_COUNT*sizeof(points[0][0]));
+	points[2]		= (CvPoint2D32f*)cvAlloc(MAX_COUNT*sizeof(points[0][0]));
 
         while (1) {
                 for (;;) {
@@ -391,13 +639,12 @@ static void mainloop(void)
                                 break;
                         /* EAGAIN - continue select loop. */
                 }
+
                 int k = cvWaitKey(33);
 
                 if (k==27) break;
         }
-//        free((unsigned char*) frame);
-//        free((unsigned char*) gray_frame);
-//        free((unsigned char*) old_frame);
+
 }
 
 static void stop_capturing(void)
@@ -886,7 +1133,6 @@ int main(int argc, char **argv)
                         exit(EXIT_FAILURE);
                 }
         }
-
         open_device();
         init_device();
         start_capturing();
